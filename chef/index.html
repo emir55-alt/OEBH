@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ÖBH Dienstgrade – Hierarchie</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f6fa;
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      background: #2c3e50;
+      color: white;
+      text-align: center;
+      padding: 1.5rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.8rem;
+    }
+
+    #controls {
+      background: #ecf0f1;
+      padding: 10px 15px;
+      border-bottom: 1px solid #ccc;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+
+    button {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    button:hover {
+      background: #2980b9;
+    }
+
+    #tree {
+      width: 100%;
+      height: 800px;
+      overflow: auto;
+      background: white;
+    }
+
+    .link {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 2px;
+    }
+
+    .node circle {
+      fill: #3498db;
+      cursor: pointer;
+      r: 5;
+      transition: 0.2s;
+    }
+
+    .node circle:hover {
+      fill: #1f78d1;
+    }
+
+    .node text {
+      font-size: 13px;
+      dominant-baseline: middle;
+      fill: #2c3e50;
+    }
+
+    .node text.group {
+      font-weight: bold;
+      fill: #e74c3c;
+    }
+
+    #tooltip {
+      position: absolute;
+      background: rgba(44,62,80,0.9);
+      color: white;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🇦🇹 Österreichisches Bundesheer – Dienstgrade</h1>
+    <p>Hierarchische Darstellung der Rangordnung</p>
+  </header>
+
+  <div id="controls">
+    <button onclick="expandAll()">Alle öffnen</button>
+    <button onclick="collapseAll()">Alle schließen</button>
+    <button onclick="resetView()">Zurücksetzen</button>
+    <button onclick="saveAsSVG()">Als SVG speichern</button>
+  <button onclick="saveAsPNG()">Als PNG speichern</button>
+  </div>
+
+  <div id="tree"></div>
+  <div id="tooltip"></div>
+
+ <script>
+  let svg, treeLayout, tooltip;
+
+  async function loadData() {
+    const response = await fetch("http://localhost:3000/api/dienstgrade");
+    const data = await response.json();
+    initializeTree(data);
+  }
+
+  function initializeTree(data) {
+    const width = 1200, height = 800;
+    svg = d3.select("#tree").append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .append("g")
+      .attr("transform", "translate(80,40)");
+
+    treeLayout = d3.tree().size([height - 100, width - 250]);
+    tooltip = document.getElementById('tooltip');
+
+    const root = d3.hierarchy(data);
+
+    function update() {
+      treeLayout(root);
+
+      const link = svg.selectAll(".link")
+        .data(root.links(), d => d.target.data.name);
+
+      link.join("path")
+        .attr("class", "link")
+        .attr("d", d3.linkHorizontal()
+          .x(d => d.y)
+          .y(d => d.x));
+
+      const node = svg.selectAll(".node")
+        .data(root.descendants(), d => d.data.name);
+
+      const nodeEnter = node.join("g")
+        .attr("class", "node")
+        .attr("transform", d => `translate(${d.y},${d.x})`);
+
+      nodeEnter.append("circle")
+        .on("click", (_, d) => {
+          if (d.children) {
+            d._children = d.children;
+            d.children = null;
+          } else {
+            d.children = d._children;
+            d._children = null;
+          }
+          update();
+        })
+        .on("mouseover", (event, d) => showTooltip(event, d))
+        .on("mouseout", hideTooltip);
+
+      nodeEnter.append("text")
+        .attr("x", d => d.children || d._children ? -10 : 10)
+        .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+        .attr("class", d => d.depth === 1 ? "group" : "")
+        .text(d => d.data.abkuerzung ? `${d.data.name} (${d.data.abkuerzung})` : d.data.name);
+
+      function showTooltip(event, d) {
+        let html = `<strong>${d.data.name}</strong>`;
+        if (d.data.abkuerzung) html += `<br>Abkürzung: ${d.data.abkuerzung}`;
+        if (d.data.nato_rang) html += `<br>NATO-Rang: ${d.data.nato_rang}`;
+        if (d.data.funktionen && d.data.funktionen.length)
+          html += `<br><em>Funktionen:</em><ul>${d.data.funktionen.map(f => `<li>${f}</li>`).join('')}</ul>`;
+
+        tooltip.innerHTML = html;
+        tooltip.style.left = (event.pageX + 15) + "px";
+        tooltip.style.top = (event.pageY + 15) + "px";
+        tooltip.style.opacity = 1;
+      }
+
+      function hideTooltip() { tooltip.style.opacity = 0; }
+
+      window.expandAll = () => { root.descendants().forEach(d => { if(d._children){ d.children=d._children; d._children=null;} }); update(); }
+      window.collapseAll = () => { root.descendants().forEach(d => { if(d.children && d.depth>0){ d._children=d.children; d.children=null;} }); update(); }
+      window.resetView = () => { collapseAll(); root.children.forEach(d=>{d.children=d._children||d.children; d._children=null;}); update(); }
+    }
+
+    update();
+  }
+
+  loadData();
+
+ window.saveAsSVG = function() {
+    const svgNode = document.querySelector("#tree svg");
+    const bbox = svgNode.getBBox();
+    const padding = 20;
+    
+    const clone = svgNode.cloneNode(true);
+    clone.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding * 2} ${bbox.height + padding * 2}`);
+    clone.setAttribute('width', bbox.width + padding * 2);
+    clone.setAttribute('height', bbox.height + padding * 2);
+    
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.textContent = `
+      .link { fill: none; stroke: #ccc; stroke-width: 2px; }
+      .node circle { fill: #3498db; r: 5; }
+      .node text { font-size: 13px; dominant-baseline: middle; fill: #2c3e50; font-family: system-ui, sans-serif; }
+      .node text.group { font-weight: bold; fill: #e74c3c; }
+    `;
+    clone.insertBefore(style, clone.firstChild);
+    
+    const serializer = new XMLSerializer();
+    let source = serializer.serializeToString(clone);
+    
+    if (!source.match(/^<svg[^>]+xmlns=/)) {
+      source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+
+    const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "dienstgrade_baum.svg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+window.saveAsPNG = function() {
+  const svgNode = document.querySelector("#tree svg");
+  const bbox = svgNode.getBBox();
+  const padding = 20;
+  
+  const clone = svgNode.cloneNode(true);
+  clone.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding * 2} ${bbox.height + padding * 2}`);
+  clone.setAttribute('width', bbox.width + padding * 2);
+  clone.setAttribute('height', bbox.height + padding * 2);
+  
+  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = `
+    .link { fill: none; stroke: #ccc; stroke-width: 2px; }
+    .node circle { fill: #3498db; r: 5; }
+    .node text { font-size: 13px; dominant-baseline: middle; fill: #2c3e50; font-family: system-ui, sans-serif; }
+    .node text.group { font-weight: bold; fill: #e74c3c; }
+  `;
+  clone.insertBefore(style, clone.firstChild);
+  
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clone);
+  
+  const canvas = document.createElement("canvas");
+  const width = bbox.width + padding * 2;
+  const height = bbox.height + padding * 2;
+  canvas.width = width * 2; 
+  canvas.height = height * 2;
+  
+  const ctx = canvas.getContext("2d");
+  ctx.scale(2, 2);
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, width, height);
+  
+  const img = new Image();
+  const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+  
+  img.onload = function() {
+    ctx.drawImage(img, 0, 0, width, height);
+    URL.revokeObjectURL(url);
+    
+    const pngUrl = canvas.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.href = pngUrl;
+    link.download = "dienstgrade_baum.png";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  
+  img.src = url;
+};
+</script>
+</body>
+</html>
